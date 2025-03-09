@@ -1,0 +1,414 @@
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Capital & Rendement - Multi-Investments</title>
+  <link href="https://cdn.jsdelivr.net/npm/@mdi/font@7.2.96/css/materialdesignicons.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/vuetify@3.4.9/dist/vuetify.min.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "vue": "https://unpkg.com/vue@3.5.13/dist/vue.esm-browser.js",
+        "vuetify": "https://unpkg.com/vuetify@3.4.9/dist/vuetify.esm.js"
+      }
+    }
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+      background-color: #f5f5f5;
+    }
+    #app {
+      max-width: 1200px;
+      margin: 20px auto;
+    }
+    .investment-card {
+      margin-bottom: 20px;
+    }
+    .chart-container {
+      height: 300px;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <v-app>
+      <v-app-bar app color="primary" dark>
+        <v-toolbar-title>Capital & Rendement</v-toolbar-title>
+        <v-spacer></v-spacer>
+        <v-btn icon @click="addInvestment">
+          <v-icon>mdi-plus</v-icon>
+        </v-btn>
+        <v-btn icon @click="toggleSettings">
+          <v-icon>mdi-cog</v-icon>
+        </v-btn>
+      </v-app-bar>
+
+      <v-container class="pt-5">
+        <!-- Global Settings Card -->
+        <v-slide-y-transition>
+          <v-card v-if="showSettings" class="mb-5 pa-4">
+            <v-row>
+              <v-col cols="12" sm="6">
+                <v-text-field
+                  v-model.number="numYears"
+                  label="Nombre d'années"
+                  type="number"
+                  @change="updateDataAndCharts"
+                ></v-text-field>
+              </v-col>
+            </v-row>
+          </v-card>
+        </v-slide-y-transition>
+
+        <!-- Investment Cards -->
+        <v-row>
+          <v-col cols="12" v-for="(investment, index) in investments" :key="investment.id">
+            <v-card class="investment-card pa-4">
+              <v-card-title class="d-flex justify-space-between align-center">
+                <span>Investment {{ index + 1 }}</span>
+                <v-btn icon small @click="deleteInvestment(investment.id)">
+                  <v-icon color="red">mdi-delete</v-icon>
+                </v-btn>
+              </v-card-title>
+              <v-card-text>
+                <!-- Capital Slider -->
+                <v-row>
+                  <v-col cols="12">
+                    <v-slider
+                      v-model="investment.startingCapital"
+                      :min="capitalDefaults.min"
+                      :max="capitalDefaults.max"
+                      :step="capitalDefaults.step"
+                      thumb-label="always"
+                      label="Capitale de départ (€)"
+                      @change="updateDataAndCharts"
+                    ></v-slider>
+                  </v-col>
+                </v-row>
+                <!-- Yield Slider -->
+                <v-row>
+                  <v-col cols="12">
+                    <v-slider
+                      v-model="investment.annualYield"
+                      :min="yieldDefaults.min"
+                      :max="yieldDefaults.max"
+                      :step="yieldDefaults.step"
+                      thumb-label="always"
+                      label="Rendement annuel"
+                      @change="updateDataAndCharts"
+                    ></v-slider>
+                  </v-col>
+                </v-row>
+                <!-- Investment Graphs -->
+                <v-row>
+                  <v-col cols="12" sm="6">
+                    <div class="chart-container">
+                      <canvas :id="'capitalChart-' + investment.id"></canvas>
+                    </div>
+                  </v-col>
+                  <v-col cols="12" sm="6">
+                    <div class="chart-container">
+                      <canvas :id="'yieldChart-' + investment.id"></canvas>
+                    </div>
+                  </v-col>
+                </v-row>
+              </v-card-text>
+            </v-card>
+          </v-col>
+        </v-row>
+
+        <!-- Total Graphs Card -->
+        <v-card class="pa-4">
+          <v-card-title>Total Capital & Rendement</v-card-title>
+          <v-card-text>
+            <v-row>
+              <v-col cols="12">
+                <div class="chart-container">
+                  <canvas id="totalCapitalChart"></canvas>
+                </div>
+              </v-col>
+            </v-row>
+            <v-row>
+              <v-col cols="12">
+                <div class="chart-container">
+                  <canvas id="totalYieldChart"></canvas>
+                </div>
+              </v-col>
+            </v-row>
+          </v-card-text>
+        </v-card>
+
+        <v-snackbar v-model="snackbarVisible" timeout="3000" color="success">
+          Paramètres mis à jour
+        </v-snackbar>
+      </v-container>
+    </v-app>
+  </div>
+
+  <script type="module">
+    import { createApp, ref, reactive, watch, onMounted, nextTick } from "vue";
+    import { createVuetify } from "vuetify";
+    import * as mdi from "https://cdn.jsdelivr.net/npm/@mdi/js@7.2.96/mdi.js";
+
+    const vuetify = createVuetify({
+      icons: {
+        defaultSet: 'mdi',
+        sets: {
+          mdi: {
+            ...mdi,
+          },
+        },
+      },
+    });
+
+    const app = createApp({
+      setup() {
+        // Global slider defaults
+        const capitalDefaults = reactive({
+          min: 10000,
+          max: 2000000,
+          step: 10000,
+        });
+        const yieldDefaults = reactive({
+          min: 0.001,
+          max: 0.15,
+          step: 0.001,
+        });
+
+        const numYears = ref(20);
+        const showSettings = ref(false);
+        const snackbarVisible = ref(false);
+        const toggleSettings = () => {
+          showSettings.value = !showSettings.value;
+        };
+
+        // Investments data
+        const investments = ref([]);
+        let investmentIdCounter = 1;
+
+        const addInvestment = () => {
+          investments.value.push({
+            id: investmentIdCounter++,
+            startingCapital: 200000,
+            annualYield: 0.04,
+          });
+          nextTick(() => {
+            initializeInvestmentCharts(investments.value[investments.value.length - 1]);
+            updateDataAndCharts();
+          });
+        };
+
+        const deleteInvestment = (id) => {
+          if (investmentCharts[id]) {
+            if(investmentCharts[id].capitalChart) {
+              investmentCharts[id].capitalChart.destroy();
+            }
+            if(investmentCharts[id].yieldChart) {
+              investmentCharts[id].yieldChart.destroy();
+            }
+            delete investmentCharts[id];
+          }
+          investments.value = investments.value.filter(inv => inv.id !== id);
+          updateDataAndCharts();
+        };
+
+        // Chart.js instances storage per investment
+        const investmentCharts = {};
+
+        // Total charts
+        let totalCapitalChart = null;
+        let totalYieldChart = null;
+
+        const initializeInvestmentCharts = (investment) => {
+          const capCtx = document.getElementById("capitalChart-" + investment.id).getContext("2d");
+          const yldCtx = document.getElementById("yieldChart-" + investment.id).getContext("2d");
+
+          investmentCharts[investment.id] = {
+            capitalChart: new Chart(capCtx, {
+              type: "line",
+              data: {
+                labels: [],
+                datasets: [{
+                  label: "Capital (€)",
+                  data: [],
+                  borderColor: "blue",
+                  fill: false,
+                }]
+              },
+              options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                  x: { title: { display: true, text: "Année" } },
+                  y: { title: { display: true, text: "Capital (€)" } }
+                }
+              }
+            }),
+            yieldChart: new Chart(yldCtx, {
+              type: "line",
+              data: {
+                labels: [],
+                datasets: [{
+                  label: "Rendement annuel (€)",
+                  data: [],
+                  borderColor: "green",
+                  fill: false,
+                }]
+              },
+              options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                  x: { title: { display: true, text: "Année" } },
+                  y: { title: { display: true, text: "Rendement (€)" } }
+                }
+              }
+            })
+          };
+        };
+
+        const initializeTotalCharts = () => {
+          const totalCapCtx = document.getElementById("totalCapitalChart").getContext("2d");
+          totalCapitalChart = new Chart(totalCapCtx, {
+            type: "line",
+            data: {
+              labels: [],
+              datasets: [{
+                label: "Total Capital (€)",
+                data: [],
+                borderColor: "blue",
+                fill: false,
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              scales: {
+                x: { title: { display: true, text: "Année" } },
+                y: { title: { display: true, text: "Capital (€)" } }
+              }
+            }
+          });
+
+          const totalYldCtx = document.getElementById("totalYieldChart").getContext("2d");
+          totalYieldChart = new Chart(totalYldCtx, {
+            type: "line",
+            data: {
+              labels: [],
+              datasets: [{
+                label: "Total Rendement (€)",
+                data: [],
+                borderColor: "green",
+                fill: false,
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              scales: {
+                x: { title: { display: true, text: "Année" } },
+                y: { title: { display: true, text: "Rendement (€)" } }
+              }
+            }
+          });
+        };
+
+        const updateDataAndCharts = () => {
+          // Update each investment chart
+          investments.value.forEach(investment => {
+            let labels = [];
+            let capData = [];
+            let yldData = [];
+            let currentCapital = investment.startingCapital;
+
+            for (let year = 0; year <= numYears.value; year++) {
+              labels.push(year.toString());
+              capData.push(Math.round(currentCapital));
+              yldData.push(Math.round(currentCapital * investment.annualYield));
+              currentCapital *= 1 + investment.annualYield;
+            }
+
+            if (investmentCharts[investment.id]) {
+              let capChart = investmentCharts[investment.id].capitalChart;
+              let yldChart = investmentCharts[investment.id].yieldChart;
+              capChart.data.labels = labels;
+              capChart.data.datasets[0].data = capData;
+              capChart.update();
+
+              yldChart.data.labels = labels;
+              yldChart.data.datasets[0].data = yldData;
+              yldChart.update();
+            }
+          });
+
+          // Update total charts
+          let totalLabels = [];
+          let totalCapData = Array(numYears.value + 1).fill(0);
+          let totalYldData = Array(numYears.value + 1).fill(0);
+
+          for (let year = 0; year <= numYears.value; year++) {
+            totalLabels.push(year.toString());
+            investments.value.forEach(investment => {
+              let capitalAtYear = investment.startingCapital * Math.pow(1 + investment.annualYield, year);
+              totalCapData[year] += Math.round(capitalAtYear);
+              totalYldData[year] += Math.round(capitalAtYear * investment.annualYield);
+            });
+          }
+
+          if(totalCapitalChart) {
+            totalCapitalChart.data.labels = totalLabels;
+            totalCapitalChart.data.datasets[0].data = totalCapData;
+            totalCapitalChart.update();
+          }
+          if(totalYieldChart) {
+            totalYieldChart.data.labels = totalLabels;
+            totalYieldChart.data.datasets[0].data = totalYldData;
+            totalYieldChart.update();
+          }
+        };
+
+        onMounted(() => {
+          // Create default investment
+          addInvestment();
+          // Initialize total charts
+          nextTick(() => {
+            initializeTotalCharts();
+            updateDataAndCharts();
+          });
+        });
+
+        // Watch global years and all investments changes (deep)
+        watch(numYears, () => {
+          snackbarVisible.value = true;
+          updateDataAndCharts();
+        });
+        watch(investments, () => {
+          snackbarVisible.value = true;
+          updateDataAndCharts();
+        }, { deep: true });
+
+        return {
+          investments,
+          numYears,
+          showSettings,
+          toggleSettings,
+          addInvestment,
+          deleteInvestment,
+          updateDataAndCharts,
+          snackbarVisible,
+          capitalDefaults,
+          yieldDefaults
+        };
+      },
+    });
+
+    app.use(vuetify);
+    app.mount("#app");
+  </script>
+</body>
+</html>
